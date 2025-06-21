@@ -1,6 +1,6 @@
-# Donetick Standalone Installer
+# Donetick Standalone Installer & Updater
 
-This script installs [Donetick](https://github.com/donetick/donetick), an open-source task and chore management application, directly onto a Debian-based system.
+This script installs and updates [Donetick](https://github.com/donetick/donetick), an open-source task and chore management application, directly onto a Debian-based system. It supports fresh installations, updates, and automatic periodic updates via cron.
 
 ## About Donetick
 
@@ -19,19 +19,46 @@ Donetick is a modern, feature-rich task and chore management application designe
 
 ## Installation
 
+### Quick Install
+
 To install Donetick on a compatible Debian-based system, run this command with root privileges:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)"
 ```
 
+### Installation Options
+
+The script supports several command-line options:
+
+```bash
+# Standard installation with automatic updates enabled
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)"
+
+# Check for updates without installing
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --check
+
+# Force installation/update even if up to date
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --force
+
+# Install without setting up automatic updates
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --disable-auto-updates
+
+# Show help
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --help
+```
+
+### What the Script Does
+
 The script will automatically:
 
-- Install required dependencies (curl, sqlite3, openssl, ca-certificates).
+- Install required dependencies (curl, sqlite3, openssl, ca-certificates, cron).
 - Create a dedicated system user (`donetick`).
 - Download the latest version of Donetick for your architecture (amd64, arm64, armv7).
 - Set up a comprehensive default configuration file with all available options.
 - Create and enable a systemd service to run Donetick on boot.
+- Configure automatic updates (runs daily at 3:00 AM by default).
+- Create an updater script at `/usr/local/bin/donetick-updater` for manual updates.
 
 ## Default Configuration
 
@@ -124,7 +151,11 @@ systemctl status donetick
 ### View Logs
 
 ```bash
+# Live service logs
 journalctl -u donetick -f
+
+# Update logs
+tail -f /var/log/donetick-updater.log
 ```
 
 ### Start/Stop/Restart Service
@@ -135,13 +166,114 @@ systemctl stop donetick
 systemctl restart donetick
 ```
 
+### Version Information
+
+```bash
+# Check current installed version
+cat /opt/Donetick_version.txt
+
+# Check for available updates
+/usr/local/bin/donetick-updater || bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --check
+
+# View installation details
+cat /root/donetick.creds
+```
+
 ## Updates
 
-The script includes an automatic update function. To update Donetick to the latest version:
+The script includes comprehensive update functionality with both manual and automatic options.
 
-1. Run the script again with the same command
-2. The script will detect the existing installation and offer to update it
-3. Configuration and data are preserved during updates
+### Manual Updates
+
+To update Donetick to the latest version:
+
+```bash
+# Re-run the installer script (detects existing installation automatically)
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)"
+
+# Or use the local updater script
+/usr/local/bin/donetick-updater
+
+# Check for updates without installing
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --check
+```
+
+### Automatic Updates
+
+By default, the script sets up automatic updates that run daily at 3:00 AM. The automatic updater:
+
+- Checks for new versions on GitHub
+- Downloads and installs updates automatically if available
+- Preserves your configuration and data
+- Logs all activities to `/var/log/donetick-updater.log`
+
+#### Automatic Update Management
+
+```bash
+# View automatic update configuration
+cat /etc/cron.d/donetick-updates
+
+# View update logs
+tail -f /var/log/donetick-updater.log
+
+# Disable automatic updates
+rm /etc/cron.d/donetick-updates
+
+# Re-enable automatic updates
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --setup-auto-updates
+```
+
+### Update Process
+
+During updates, the script:
+
+1. Automatically backs up your current configuration
+2. Stops the Donetick service
+3. Downloads and installs the new version
+4. Preserves your existing configuration and data
+5. Restarts the service with the new version
+
+Configuration backups are stored as: `/opt/donetick/config/selfhosted.yaml.backup.YYYYMMDD_HHMMSS`
+
+## Automatic Update System
+
+The installer sets up a comprehensive automatic update system that keeps your Donetick installation current with the latest releases.
+
+### How It Works
+
+- **Daily Checks**: The system checks for updates daily at 3:00 AM
+- **Smart Updates**: Only downloads and installs if a newer version is available
+- **Configuration Preservation**: Your settings and data are never touched during updates
+- **Automatic Backups**: Configuration is backed up before each update
+- **Logging**: All update activities are logged for troubleshooting
+
+### Update Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Updater Script | `/usr/local/bin/donetick-updater` | Main update logic |
+| Cron Job | `/etc/cron.d/donetick-updates` | Scheduled execution |
+| Update Logs | `/var/log/donetick-updater.log` | Activity logging |
+| Version File | `/opt/Donetick_version.txt` | Current version tracking |
+
+### Manual Update Control
+
+```bash
+# Run update check manually
+/usr/local/bin/donetick-updater
+
+# View recent update activity
+tail -20 /var/log/donetick-updater.log
+
+# Temporarily disable automatic updates
+chmod -x /usr/local/bin/donetick-updater
+
+# Re-enable automatic updates
+chmod +x /usr/local/bin/donetick-updater
+
+# Completely remove automatic updates
+rm /etc/cron.d/donetick-updates /usr/local/bin/donetick-updater
+```
 
 ## Database Management
 
@@ -232,6 +364,21 @@ Generate an API token in the Donetick web interface under Settings > API.
 1. Check if database file exists: `ls -la /opt/donetick/data/`
 2. Verify SQLite installation: `sqlite3 --version`
 3. Test database connectivity: `sqlite3 /opt/donetick/data/donetick.db ".tables"`
+
+### Update Issues
+
+1. Check update logs: `tail -f /var/log/donetick-updater.log`
+2. Verify internet connectivity: `curl -I https://api.github.com/repos/donetick/donetick/releases/latest`
+3. Check if updater script exists: `ls -la /usr/local/bin/donetick-updater`
+4. Test manual update: `/usr/local/bin/donetick-updater`
+5. Force reinstall: `bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --force`
+
+### Automatic Updates Not Working
+
+1. Check cron job: `cat /etc/cron.d/donetick-updates`
+2. Verify cron service: `systemctl status cron` or `systemctl status cronie`
+3. Check for recent update attempts: `grep donetick /var/log/syslog`
+4. Test updater script manually: `/usr/local/bin/donetick-updater`
 
 ### Port Already in Use
 
