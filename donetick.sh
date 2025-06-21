@@ -56,6 +56,15 @@ function get_latest_version() {
   fi
 }
 
+function get_latest_tag() {
+  local release_info=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest" 2>/dev/null)
+  if [[ $? -eq 0 ]] && [[ -n "$release_info" ]]; then
+    echo "$release_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}'
+  else
+    echo ""
+  fi
+}
+
 function version_compare() {
   # Returns: 0 if equal, 1 if v1 > v2, 2 if v1 < v2
   local v1="$1"
@@ -280,10 +289,9 @@ function install_donetick() {
 
   # Step 4: Download and Install Donetick
   msg_info "Fetching latest release information from GitHub..."
-  RELEASE_INFO=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest")
-  LATEST_TAG=$(echo "$RELEASE_INFO" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+  LATEST_TAG=$(get_latest_tag)
   
-  # Keep the original tag for URL, but clean version for display
+  # Clean version for display and storage
   LATEST_VERSION=${LATEST_TAG#v}
   
   msg_info "Parsed version: ${LATEST_VERSION}"
