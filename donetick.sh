@@ -163,9 +163,9 @@ if [[ $? -ne 0 ]] || [[ -z "$latest_info" ]]; then
   exit 1
 fi
 
-latest_version=$(echo "$latest_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
-# Remove any leading 'v' from version if it exists
-latest_version=${latest_version#v}
+latest_tag=$(echo "$latest_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+# Keep the original tag for URL, but clean version for comparison
+latest_version=${latest_tag#v}
 
 if [[ -z "$latest_version" ]]; then
   log_msg "WARNING: Could not parse latest version"
@@ -281,10 +281,10 @@ function install_donetick() {
   # Step 4: Download and Install Donetick
   msg_info "Fetching latest release information from GitHub..."
   RELEASE_INFO=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest")
-  LATEST_VERSION=$(echo "$RELEASE_INFO" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+  LATEST_TAG=$(echo "$RELEASE_INFO" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
   
-  # Remove any leading 'v' from version if it exists
-  LATEST_VERSION=${LATEST_VERSION#v}
+  # Keep the original tag for URL, but clean version for display
+  LATEST_VERSION=${LATEST_TAG#v}
   
   msg_info "Parsed version: ${LATEST_VERSION}"
   
@@ -301,7 +301,7 @@ function install_donetick() {
     *) msg_error "Unsupported architecture: ${ARCH}. Cannot continue." ;;
   esac
 
-  DOWNLOAD_URL="https://github.com/donetick/donetick/releases/download/${LATEST_VERSION}/donetick_Linux_${DOWNLOAD_ARCH}.tar.gz"
+  DOWNLOAD_URL="https://github.com/donetick/donetick/releases/download/${LATEST_TAG}/donetick_Linux_${DOWNLOAD_ARCH}.tar.gz"
 
   if [[ "$is_update" == "true" ]]; then
     msg_info "Updating Donetick to v${LATEST_VERSION} for ${ARCH}..."
