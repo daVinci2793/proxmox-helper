@@ -22,7 +22,7 @@ Donetick is a modern, feature-rich task and chore management application designe
 To create a new Proxmox VE Donetick LXC container, run this command in the Proxmox VE Shell:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/your-repo/ProxmoxVE/main/ct/donetick.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/ct/donetick.sh)"
 ```
 
 ## Default Settings
