@@ -16,7 +16,6 @@
 APP_NAME="Donetick"
 INSTALL_DIR="/opt/donetick"
 CONFIG_DIR="${INSTALL_DIR}/config"
-DATA_DIR="${INSTALL_DIR}/data"
 SERVICE_USER="donetick"
 SERVICE_FILE="/etc/systemd/system/donetick.service"
 VERSION_FILE="/opt/${APP_NAME}_version.txt"
@@ -337,7 +336,7 @@ function install_donetick() {
   # Step 5: Create Configuration (only if not updating)
   if [[ "$is_update" == "false" ]]; then
     msg_info "Creating configuration file..."
-    mkdir -p "${CONFIG_DIR}" "${DATA_DIR}"
+    mkdir -p "${CONFIG_DIR}"
     JWT_SECRET=$(openssl rand -base64 32)
 
     cat <<EOF > "${CONFIG_DIR}/selfhosted.yaml"
@@ -424,7 +423,7 @@ EOF
     msg_ok "Default configuration created at ${CONFIG_DIR}/selfhosted.yaml"
   else
     msg_info "Preserving existing configuration file..."
-    mkdir -p "${CONFIG_DIR}" "${DATA_DIR}"
+    mkdir -p "${CONFIG_DIR}"
   fi
 
   # Step 6: Set Permissions
@@ -461,7 +460,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${DATA_DIR}
+ReadWritePaths=/opt/donetick/config /opt/donetick
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectKernelTunables=true
