@@ -294,6 +294,7 @@ function install_donetick() {
   # Clean version for display and storage
   LATEST_VERSION=${LATEST_TAG#v}
   
+  msg_info "Latest tag from GitHub: '${LATEST_TAG}'"
   msg_info "Parsed version: ${LATEST_VERSION}"
   
   if [ -z "$LATEST_VERSION" ]; then
