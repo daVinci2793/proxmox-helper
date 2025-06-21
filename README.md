@@ -1,6 +1,6 @@
-# Donetick Proxmox Helper Script
+# Donetick Standalone Installer
 
-This script creates a Proxmox LXC container with Donetick, an open-source task and chore management application.
+This script installs [Donetick](https://github.com/donetick/donetick), an open-source task and chore management application, directly onto a Debian-based system.
 
 ## About Donetick
 
@@ -19,24 +19,24 @@ Donetick is a modern, feature-rich task and chore management application designe
 
 ## Installation
 
-To create a new Proxmox VE Donetick LXC container, run this command in the Proxmox VE Shell:
+To install Donetick on a compatible Debian-based system, run this command with root privileges:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)"
 ```
 
-## Default Settings
+The script will automatically:
 
-- **OS**: Debian 12
-- **CPU**: 1 vCPU
-- **RAM**: 1GB
-- **Storage**: 4GB
-- **Network**: DHCP
-- **Unprivileged**: Yes
+- Install required dependencies (curl, sqlite3, openssl, ca-certificates).
+- Create a dedicated system user (`donetick`).
+- Download the latest version of Donetick for your architecture (amd64, arm64, armv7).
+- Set up a comprehensive default configuration file with all available options.
+- Create and enable a systemd service to run Donetick on boot.
 
 ## Default Configuration
 
-- **Port**: 2021
+- **Install Directory**: `/opt/donetick`
+- **Port**: `2021`
 - **Database**: SQLite (stored in `/opt/donetick/data/donetick.db`)
 - **Config File**: `/opt/donetick/config/selfhosted.yaml`
 - **Data Directory**: `/opt/donetick/data`
@@ -44,13 +44,15 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-help
 
 ## First Time Setup
 
-1. After installation, access Donetick at `http://<LXC_IP>:2021`
-2. Create your first admin user account
+1. After installation, access Donetick at `http://<SERVER_IP>:2021`
+2. Create your first admin user account.
 3. Start creating tasks and managing your to-do lists!
 
 ## Configuration
 
-### View Configuration Details
+### View Installation Details
+
+A file with the application URL is created after installation.
 
 ```bash
 cat /root/donetick.creds
@@ -62,7 +64,7 @@ cat /root/donetick.creds
 nano /opt/donetick/config/selfhosted.yaml
 ```
 
-After editing the configuration, restart the service:
+After editing the configuration, restart the service for the changes to take effect:
 
 ```bash
 systemctl restart donetick
@@ -98,7 +100,6 @@ oauth2:
   token_url: "https://oauth2.googleapis.com/token"
   user_info_url: "https://www.googleapis.com/oauth2/v2/userinfo"
   redirect_url: "http://your-domain:2021/auth/callback"
-  name: "google"
 ```
 
 #### Email Notifications

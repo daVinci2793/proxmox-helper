@@ -3,14 +3,13 @@
   "slug": "donetick",
   "categories": ["productivity"],
   "date_created": "2025-06-20",
-  "type": "ct",
+  "type": "standalone",
   "updateable": true,
-  "privileged": false,
   "interface_port": 2021,
   "documentation": "https://github.com/donetick/donetick",
   "website": "https://donetick.com",
   "logo": "https://raw.githubusercontent.com/donetick/donetick/main/assets/icon.png",
-  "description": "Donetick is an open-source, user-friendly app for managing tasks and chores, featuring collaborative organization, natural language task creation, and comprehensive integrations.",
+  "description": "Donetick is an open-source, user-friendly app for managing tasks and chores, featuring collaborative organization, natural language task creation, and comprehensive integrations. This standalone installer works on any compatible Debian-based system.",
   "install_methods": [
     {
       "type": "script",
@@ -22,19 +21,20 @@
   },
   "notes": {
     "post_install": [
-      "Access Donetick at http://<LXC_IP>:2021",
+      "Access Donetick at http://<SERVER_IP>:2021",
       "Create your first admin user account on initial setup",
       "Configuration details available at: cat /root/donetick.creds",
       "Config file location: /opt/donetick/config/selfhosted.yaml"
     ],
-    "compose_dir": "/opt/donetick",
+    "install_dir": "/opt/donetick",
     "config_dir": "/opt/donetick/config"
   },
-  "cpu": 1,
-  "ram": 1024,
-  "hdd": 4,
-  "os": "debian",
-  "version": "12",
+  "system_requirements": {
+    "min_ram": "512MB",
+    "min_storage": "2GB",
+    "supported_os": ["debian", "ubuntu"],
+    "required_packages": ["curl", "sqlite3", "openssl", "ca-certificates"]
+  },
   "tags": [
     "task-management",
     "productivity",
@@ -43,6 +43,7 @@
     "todo",
     "chores",
     "family",
-    "gamification"
+    "gamification",
+    "standalone"
   ]
 }

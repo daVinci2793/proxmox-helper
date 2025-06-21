@@ -1,145 +1,146 @@
 #!/usr/bin/env bash
-source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/build.func)
-# Copyright (c) 2021-2025 community-scripts ORG
-# Author: assistant | Based on firefly.sh by quantumryuu
-# License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
+#
+# Donetick Standalone Installer
+#
+# Description: Installs Donetick, an open-source task manager, on a Debian-based system.
+# Author: daVinci
+# License: MIT
+# Repository: https://github.com/donetick/donetick
+#
 
-# Source: https://github.com/donetick/donetick
+# --- Configuration ---
+APP_NAME="Donetick"
+INSTALL_DIR="/opt/donetick"
+CONFIG_DIR="${INSTALL_DIR}/config"
+DATA_DIR="${INSTALL_DIR}/data"
+SERVICE_USER="donetick"
+SERVICE_FILE="/etc/systemd/system/donetick.service"
+VERSION_FILE="/opt/${APP_NAME}_version.txt"
 
-APP="Donetick"
-var_tags="${var_tags:-productivity}"
-var_cpu="${var_cpu:-1}"
-var_ram="${var_ram:-1024}"
-var_disk="${var_disk:-4}"
-var_os="${var_os:-debian}"
-var_version="${var_version:-12}"
-var_unprivileged="${var_unprivileged:-1}"
+# --- Colors for Logging ---
+YW=$(echo -e '\033[33m')
+BL=$(echo -e '\033[36m')
+RD=$(echo -e '\033[01;31m')
+GN=$(echo -e '\033[1;92m')
+CL=$(echo -e '\033[0m')
 
-header_info "$APP"
-variables
-color
-catch_errors
+# --- Logging Functions ---
+msg_info() { echo -e "${BL}[INFO]${CL} $@"; }
+msg_ok() { echo -e "${GN}[OK]${CL} $@"; }
+msg_warn() { echo -e "${YW}[WARN]${CL} $@"; }
+msg_error() { echo -e "${RD}[ERROR]${CL} $@"; exit 1; }
 
-function update_script() {
-  header_info
-  check_container_storage
-  check_container_resources
-
-  if [[ ! -d /opt/donetick ]]; then
-    msg_error "No ${APP} Installation Found!"
-    exit
+# --- Pre-run Checks ---
+function pre_run_checks() {
+  msg_info "Performing pre-run checks..."
+  # Check for root privileges
+  if [[ $EUID -ne 0 ]]; then
+    msg_error "This script must be run as root. Please use 'sudo'."
   fi
-  
-  RELEASE=$(curl -fsSL https://api.github.com/repos/donetick/donetick/releases/latest | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
-  if [[ ! -f /opt/${APP}_version.txt ]] || [[ "${RELEASE}" != "$(cat /opt/${APP}_version.txt)" ]]; then
-    msg_info "Stopping ${APP}"
-    systemctl stop donetick
-    msg_ok "Stopped ${APP}"
 
-    msg_info "Backing up configuration"
-    cp /opt/donetick/config/selfhosted.yaml /opt/selfhosted.yaml.backup
-    msg_ok "Backed up configuration"
-
-    msg_info "Updating ${APP} to ${RELEASE}"
-    cd /opt/donetick
-    
-    # Download the latest release
-    ARCH=$(dpkg --print-architecture)
-    case $ARCH in
-      amd64) DOWNLOAD_ARCH="amd64" ;;
-      arm64) DOWNLOAD_ARCH="arm64" ;;
-      armhf) DOWNLOAD_ARCH="armv7" ;;
-      *) msg_error "Unsupported architecture: $ARCH"; exit 1 ;;
-    esac
-    
-    curl -fsSL "https://github.com/donetick/donetick/releases/download/${RELEASE}/donetick_Linux_${DOWNLOAD_ARCH}.tar.gz" -o donetick.tar.gz
-    tar -xzf donetick.tar.gz
-    chmod +x donetick
-    rm donetick.tar.gz
-    
-    # Restore configuration
-    cp /opt/selfhosted.yaml.backup /opt/donetick/config/selfhosted.yaml
-    rm /opt/selfhosted.yaml.backup
-    
-    echo "${RELEASE}" > "/opt/${APP}_version.txt"
-    msg_ok "Updated ${APP} to ${RELEASE}"
-
-    msg_info "Starting ${APP}"
-    systemctl start donetick
-    msg_ok "Started ${APP}"
-    
-    msg_ok "Updated Successfully"
-  else
-    msg_ok "No update required. ${APP} is already at ${RELEASE}."
+  # Check for systemd
+  if ! command -v systemctl >/dev/null 2>&1; then
+    msg_error "This script requires systemd, which was not found on this system."
   fi
-  exit
+  msg_ok "Pre-run checks passed."
 }
 
-start
-build_container
-description
+# --- Installation Steps ---
+function install_donetick() {
+  set -e # Exit immediately if a command exits with a non-zero status.
 
-msg_info "Installing Dependencies"
-$STD apt-get install -y \
-  curl \
-  sudo \
-  mc \
-  gpg \
-  ca-certificates \
-  sqlite3
-msg_ok "Installed Dependencies"
+  msg_info "Beginning Donetick installation..."
 
-msg_info "Setting up ${APP} User"
-useradd -r -s /bin/false -d /opt/donetick donetick
-msg_ok "Created ${APP} User"
+  # Step 1: Install Dependencies
+  msg_info "Updating package lists and installing dependencies..."
+  apt-get update >/dev/null
+  apt-get install -y curl sqlite3 gpg ca-certificates openssl >/dev/null
+  msg_ok "Dependencies installed successfully."
 
-msg_info "Installing ${APP}"
-mkdir -p /opt/donetick/{config,data}
-cd /opt/donetick
+  # Step 2: Create Application User
+  msg_info "Creating system user '${SERVICE_USER}'..."
+  if id "${SERVICE_USER}" &>/dev/null; then
+    msg_warn "User '${SERVICE_USER}' already exists. Skipping creation."
+  else
+    useradd -r -s /bin/false -d "${INSTALL_DIR}" "${SERVICE_USER}"
+    msg_ok "System user '${SERVICE_USER}' created."
+  fi
 
-# Get latest release
-RELEASE=$(curl -fsSL https://api.github.com/repos/donetick/donetick/releases/latest | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+  # Step 3: Stop existing service if updating
+  if systemctl is-active --quiet donetick; then
+    msg_info "Donetick is running. Stopping service for update..."
+    systemctl stop donetick
+    msg_ok "Service stopped."
+  fi
 
-# Download the appropriate binary for the architecture
-ARCH=$(dpkg --print-architecture)
-case $ARCH in
-  amd64) DOWNLOAD_ARCH="amd64" ;;
-  arm64) DOWNLOAD_ARCH="arm64" ;;
-  armhf) DOWNLOAD_ARCH="armv7" ;;
-  *) msg_error "Unsupported architecture: $ARCH"; exit 1 ;;
-esac
+  # Step 4: Download and Install Donetick
+  msg_info "Fetching latest release information from GitHub..."
+  RELEASE_INFO=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest")
+  LATEST_VERSION=$(echo "$RELEASE_INFO" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+  
+  if [ -z "$LATEST_VERSION" ]; then
+    msg_error "Could not determine latest Donetick version. Aborting."
+  fi
 
-curl -fsSL "https://github.com/donetick/donetick/releases/download/${RELEASE}/donetick_Linux_${DOWNLOAD_ARCH}.tar.gz" -o donetick.tar.gz
-tar -xzf donetick.tar.gz
-chmod +x donetick
-rm donetick.tar.gz
+  ARCH=$(dpkg --print-architecture)
+  DOWNLOAD_ARCH=""
+  case $ARCH in
+    amd64) DOWNLOAD_ARCH="amd64" ;;
+    arm64) DOWNLOAD_ARCH="arm64" ;;
+    armhf) DOWNLOAD_ARCH="armv7" ;;
+    *) msg_error "Unsupported architecture: ${ARCH}. Cannot continue." ;;
+  esac
 
-echo "${RELEASE}" > "/opt/${APP}_version.txt"
-msg_ok "Installed ${APP} ${RELEASE}"
+  DOWNLOAD_URL="https://github.com/donetick/donetick/releases/download/${LATEST_VERSION}/donetick_Linux_${DOWNLOAD_ARCH}.tar.gz"
 
-msg_info "Creating Configuration"
-# Generate a secure JWT secret
-JWT_SECRET=$(openssl rand -base64 32)
+  msg_info "Downloading Donetick v${LATEST_VERSION} for ${ARCH}..."
+  mkdir -p "${INSTALL_DIR}"
+  curl -fsSL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/donetick.tar.gz"
+  
+  msg_info "Extracting archive..."
+  tar -xzf "${INSTALL_DIR}/donetick.tar.gz" -C "${INSTALL_DIR}"
+  rm "${INSTALL_DIR}/donetick.tar.gz"
+  echo "${LATEST_VERSION}" > "${VERSION_FILE}"
+  msg_ok "Donetick v${LATEST_VERSION} installed successfully."
 
-cat <<EOF > /opt/donetick/config/selfhosted.yaml
+  # Step 5: Create Configuration
+  msg_info "Creating configuration file..."
+  mkdir -p "${CONFIG_DIR}" "${DATA_DIR}"
+  JWT_SECRET=$(openssl rand -base64 32)
+
+  cat <<EOF > "${CONFIG_DIR}/selfhosted.yaml"
+# Donetick Self-Hosted Configuration
+# Generated by installer on $(date)
+# For more options, see: https://github.com/donetick/donetick/blob/main/config/selfhosted.yaml.dist
+
 name: "selfhosted"
 is_done_tick_dot_com: false
 is_user_creation_disabled: false
 
+# Notification Services
 telegram:
   token: ""
 pushover:
   token: ""
 
+# Database Configuration
 database:
   type: "sqlite"
   migration: true
+  # These are only required for postgres
+  host: "secret"
+  port: 5432
+  user: "secret"
+  password: "secret"
+  name: "secret"
 
+# JWT Authentication
 jwt:
   secret: "${JWT_SECRET}"
   session_time: 168h
   max_refresh: 168h
 
+# Server Configuration
 server:
   port: 2021
   read_timeout: 10s
@@ -149,22 +150,42 @@ server:
   cors_allow_origins:
     - "http://localhost:5173"
     - "http://localhost:7926"
-    # the below are required for the android app to work
+    # The below are required for the android app to work
     - "https://localhost"
     - "capacitor://localhost"
   serve_frontend: true
 
+# Logging Configuration
 logging:
   level: "info"
   encoding: "json"
   development: false
 
+# Scheduler Jobs
 scheduler_jobs:
   due_job: 30m
   overdue_job: 3h
   pre_due_job: 3h
 
-# Real-time configuration
+# Email Configuration
+email:
+  host: 
+  port: 
+  key: 
+  email:  
+  appHost:  
+
+# OAuth2 Configuration
+oauth2:
+  client_id: 
+  client_secret: 
+  auth_url: 
+  token_url: 
+  user_info_url: 
+  redirect_url: 
+  name:
+
+# Real-time Configuration
 realtime:
   enabled: true
   websocket_enabled: false
@@ -180,65 +201,20 @@ realtime:
   enable_stats: true
   allowed_origins:
     - "*"
-
-email:
-  host: ""
-  port: ""
-  key: ""
-  email: ""
-  appHost: ""
-
-oauth2:
-  client_id: ""
-  client_secret: ""
-  auth_url: ""
-  token_url: ""
-  user_info_url: ""
-  redirect_url: ""
-  name: ""
 EOF
+  msg_ok "Default configuration created at ${CONFIG_DIR}/selfhosted.yaml"
 
-# Save configuration info for user
-cat <<EOF > /root/donetick.creds
-Donetick Configuration Details
-=============================
-Application: Donetick v${RELEASE}
-Config File: /opt/donetick/config/selfhosted.yaml
-Data Directory: /opt/donetick/data
-Database: SQLite (/opt/donetick/data/donetick.db)
-JWT Secret: ${JWT_SECRET}
+  # Step 6: Set Permissions
+  msg_info "Setting file permissions..."
+  chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"
+  chmod 750 "${INSTALL_DIR}"
+  chmod 640 "${CONFIG_DIR}/selfhosted.yaml"
+  chmod +x "${INSTALL_DIR}/donetick"
+  msg_ok "Permissions set."
 
-Default Access:
-- URL: http://$(hostname -I | awk '{print $1}'):2021
-- First run will allow you to create an admin user
-
-Android App Support:
-- CORS origins are configured for Android app compatibility
-- Supports both development and Capacitor app environments
-- Use your server IP/domain in the Android app settings
-
-Service Management:
-- Start: systemctl start donetick
-- Stop: systemctl stop donetick
-- Status: systemctl status donetick
-- Logs: journalctl -u donetick -f
-
-Configuration:
-Edit /opt/donetick/config/selfhosted.yaml to customize settings
-such as notifications, OAuth, email, etc.
-EOF
-
-msg_ok "Created Configuration"
-
-msg_info "Setting Permissions"
-chown -R donetick:donetick /opt/donetick
-chmod 755 /opt/donetick
-chmod 644 /opt/donetick/config/selfhosted.yaml
-chmod +x /opt/donetick/donetick
-msg_ok "Set Permissions"
-
-msg_info "Creating Systemd Service"
-cat <<EOF > /etc/systemd/system/donetick.service
+  # Step 7: Create Systemd Service
+  msg_info "Creating systemd service..."
+  cat <<EOF > "${SERVICE_FILE}"
 [Unit]
 Description=Donetick Task Manager
 After=network.target
@@ -246,23 +222,21 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=donetick
-Group=donetick
-WorkingDirectory=/opt/donetick
-ExecStart=/opt/donetick/donetick
-Environment=DT_ENV=selfhosted
-Environment=DT_CONFIG_PATH=/opt/donetick/config/selfhosted.yaml
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${INSTALL_DIR}/donetick
+Environment="DT_ENV=selfhosted"
+Environment="DT_CONFIG_PATH=${CONFIG_DIR}/selfhosted.yaml"
 Restart=always
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
 
-# Security settings
+# Security Hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/donetick/data
+ReadWritePaths=${DATA_DIR}
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectKernelTunables=true
@@ -272,21 +246,49 @@ ProtectControlGroups=true
 [Install]
 WantedBy=multi-user.target
 EOF
+  msg_ok "Systemd service file created at ${SERVICE_FILE}"
 
-systemctl daemon-reload
-systemctl enable donetick
-msg_ok "Created Systemd Service"
+  # Step 8: Start and Enable Service
+  msg_info "Reloading systemd, enabling and starting Donetick service..."
+  systemctl daemon-reload
+  systemctl enable --now donetick
+  msg_ok "Donetick service started and enabled on boot."
 
-msg_info "Starting ${APP}"
-systemctl start donetick
-msg_ok "Started ${APP}"
+  # Step 9: Create Credentials File
+  msg_info "Creating credentials and information file..."
+  IP_ADDR=$(hostname -I | awk '{print $1}')
+  cat <<EOF > /root/donetick.creds
+Donetick Installation Details
+=============================
+Version:      ${LATEST_VERSION}
+Access URL:   http://${IP_ADDR}:2021
+Install Dir:  ${INSTALL_DIR}
+Config File:  ${CONFIG_DIR}/selfhosted.yaml
+Data Dir:     ${DATA_DIR}
+JWT Secret:   ${JWT_SECRET}
 
-msg_info "Cleaning up"
-apt-get autoremove -y
-apt-get autoclean
-msg_ok "Cleaned"
+Service Management:
+- Start:   systemctl start donetick
+- Stop:    systemctl stop donetick
+- Restart: systemctl restart donetick
+- Status:  systemctl status donetick
+- Logs:    journalctl -u donetick -f
 
-msg_ok "Completed Successfully!\n"
-echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
-echo -e "${INFO}${YW} Access it using the following URL:${CL}"
-echo -e "${TAB}${GATEWAY}${BGN}http://${IP}:2021${CL}"
+To update, simply re-run this script.
+EOF
+  msg_ok "Installation details saved to /root/donetick.creds"
+}
+
+# --- Main Execution ---
+function main() {
+  pre_run_checks
+  install_donetick
+
+  echo
+  msg_ok "Donetick installation/update complete!"
+  msg_info "You can now access Donetick at http://$(hostname -I | awk '{print $1}'):2021"
+  msg_info "On first access, you will be prompted to create an admin account."
+  echo
+}
+
+main
