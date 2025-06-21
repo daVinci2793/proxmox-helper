@@ -1,0 +1,48 @@
+{
+  "name": "Donetick",
+  "slug": "donetick",
+  "categories": ["productivity"],
+  "date_created": "2025-06-20",
+  "type": "ct",
+  "updateable": true,
+  "privileged": false,
+  "interface_port": 2021,
+  "documentation": "https://github.com/donetick/donetick",
+  "website": "https://donetick.com",
+  "logo": "https://raw.githubusercontent.com/donetick/donetick/main/assets/icon.png",
+  "description": "Donetick is an open-source, user-friendly app for managing tasks and chores, featuring collaborative organization, natural language task creation, and comprehensive integrations.",
+  "install_methods": [
+    {
+      "type": "script",
+      "script": "donetick.sh"
+    }
+  ],
+  "default_credentials": {
+    "note": "No default credentials. Create admin user on first access."
+  },
+  "notes": {
+    "post_install": [
+      "Access Donetick at http://<LXC_IP>:2021",
+      "Create your first admin user account on initial setup",
+      "Configuration details available at: cat /root/donetick.creds",
+      "Config file location: /opt/donetick/config/selfhosted.yaml"
+    ],
+    "compose_dir": "/opt/donetick",
+    "config_dir": "/opt/donetick/config"
+  },
+  "cpu": 1,
+  "ram": 1024,
+  "hdd": 4,
+  "os": "debian",
+  "version": "12",
+  "tags": [
+    "task-management",
+    "productivity",
+    "self-hosted",
+    "collaboration",
+    "todo",
+    "chores",
+    "family",
+    "gamification"
+  ]
+}
