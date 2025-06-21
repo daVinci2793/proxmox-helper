@@ -48,7 +48,9 @@ function get_current_version() {
 function get_latest_version() {
   local release_info=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest" 2>/dev/null)
   if [[ $? -eq 0 ]] && [[ -n "$release_info" ]]; then
-    echo "$release_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}'
+    local version=$(echo "$release_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+    # Remove any leading 'v' from version if it exists
+    echo "${version#v}"
   else
     echo ""
   fi
@@ -162,6 +164,8 @@ if [[ $? -ne 0 ]] || [[ -z "$latest_info" ]]; then
 fi
 
 latest_version=$(echo "$latest_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
+# Remove any leading 'v' from version if it exists
+latest_version=${latest_version#v}
 
 if [[ -z "$latest_version" ]]; then
   log_msg "WARNING: Could not parse latest version"
@@ -279,6 +283,11 @@ function install_donetick() {
   RELEASE_INFO=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest")
   LATEST_VERSION=$(echo "$RELEASE_INFO" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
   
+  # Remove any leading 'v' from version if it exists
+  LATEST_VERSION=${LATEST_VERSION#v}
+  
+  msg_info "Parsed version: ${LATEST_VERSION}"
+  
   if [ -z "$LATEST_VERSION" ]; then
     msg_error "Could not determine latest Donetick version. Aborting."
   fi
@@ -299,6 +308,8 @@ function install_donetick() {
   else
     msg_info "Downloading Donetick v${LATEST_VERSION} for ${ARCH}..."
   fi
+  
+  msg_info "Download URL: ${DOWNLOAD_URL}"
   
   mkdir -p "${INSTALL_DIR}"
   curl -fsSL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/donetick.tar.gz"
