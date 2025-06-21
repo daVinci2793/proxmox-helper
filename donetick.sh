@@ -134,8 +134,6 @@ pushover:
 database:
   type: "sqlite"
   migration: true
-  # SQLite path
-  sqlite_path: "/opt/donetick/data/donetick.db"
 
 jwt:
   secret: "${JWT_SECRET}"
@@ -149,7 +147,11 @@ server:
   rate_period: 60s
   rate_limit: 300
   cors_allow_origins:
-    - "*"
+    - "http://localhost:5173"
+    - "http://localhost:7926"
+    # the below are required for the android app to work
+    - "https://localhost"
+    - "capacitor://localhost"
   serve_frontend: true
 
 logging:
@@ -209,6 +211,11 @@ JWT Secret: ${JWT_SECRET}
 Default Access:
 - URL: http://$(hostname -I | awk '{print $1}'):2021
 - First run will allow you to create an admin user
+
+Android App Support:
+- CORS origins are configured for Android app compatibility
+- Supports both development and Capacitor app environments
+- Use your server IP/domain in the Android app settings
 
 Service Management:
 - Start: systemctl start donetick

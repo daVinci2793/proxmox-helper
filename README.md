@@ -184,6 +184,24 @@ storage:
   secret_key: "your-secret-key"
 ```
 
+## Mobile App Support
+
+Donetick includes official mobile apps for iOS and Android built with Capacitor. The script is pre-configured with the necessary CORS settings for Android app compatibility.
+
+### Android App Setup
+
+1. Install the Donetick Android app from the Google Play Store or F-Droid
+2. In the app settings, configure your server URL as `http://<LXC_IP>:2021`
+3. If using HTTPS, ensure your SSL certificate is properly configured
+4. The server includes the required CORS origins:
+   - `https://localhost`
+   - `capacitor://localhost`
+   - Development origins for local testing
+
+### iOS App Setup
+
+Similar to Android, configure the server URL in the iOS app settings.
+
 ## Integrations
 
 ### Home Assistant
