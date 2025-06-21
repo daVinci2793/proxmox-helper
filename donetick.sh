@@ -286,7 +286,7 @@ function install_donetick() {
   ARCH=$(dpkg --print-architecture)
   DOWNLOAD_ARCH=""
   case $ARCH in
-    amd64) DOWNLOAD_ARCH="amd64" ;;
+    amd64) DOWNLOAD_ARCH="x86_64" ;;
     arm64) DOWNLOAD_ARCH="arm64" ;;
     armhf) DOWNLOAD_ARCH="armv7" ;;
     *) msg_error "Unsupported architecture: ${ARCH}. Cannot continue." ;;

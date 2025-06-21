@@ -54,7 +54,7 @@ The script will automatically:
 
 - Install required dependencies (curl, sqlite3, openssl, ca-certificates, cron).
 - Create a dedicated system user (`donetick`).
-- Download the latest version of Donetick for your architecture (amd64, arm64, armv7).
+- Download the latest version of Donetick for your architecture (x86_64/amd64, arm64, armv7).
 - Set up a comprehensive default configuration file with all available options.
 - Create and enable a systemd service to run Donetick on boot.
 - Configure automatic updates (runs daily at 3:00 AM by default).
