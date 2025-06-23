@@ -128,7 +128,48 @@ function backup_config() {
     msg_info "Backing up existing configuration..."
     cp "${CONFIG_DIR}/selfhosted.yaml" "$backup_file"
     msg_ok "Configuration backed up to: $backup_file"
+    # Store backup path for restoration
+    echo "$backup_file" > "${CONFIG_DIR}/.last_backup"
   fi
+}
+
+function restore_config() {
+  local backup_path
+  if [[ -f "${CONFIG_DIR}/.last_backup" ]]; then
+    backup_path=$(cat "${CONFIG_DIR}/.last_backup")
+    if [[ -f "$backup_path" ]]; then
+      msg_info "Restoring configuration from backup..."
+      cp "$backup_path" "${CONFIG_DIR}/selfhosted.yaml"
+      chown "${SERVICE_USER}":"${SERVICE_USER}" "${CONFIG_DIR}/selfhosted.yaml"
+      chmod 640 "${CONFIG_DIR}/selfhosted.yaml"
+      msg_ok "Configuration restored from backup"
+      rm -f "${CONFIG_DIR}/.last_backup"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+function check_breaking_changes() {
+  local version="$1"
+  msg_info "Checking for breaking changes in v${version}..."
+  
+  local release_notes=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/tags/v${version}" 2>/dev/null)
+  if [[ $? -eq 0 ]] && [[ -n "$release_notes" ]]; then
+    local body=$(echo "$release_notes" | grep -o '"body":"[^"]*"' | sed 's/"body":"//;s/"$//' | sed 's/\\n/\n/g')
+    
+    # Check for breaking change indicators
+    if echo "$body" | grep -qi -E "(breaking|migration|config.change|incompatible|deprecated|database.migration)"; then
+      msg_warn "Potential breaking changes detected in v${version}!"
+      msg_warn "Release notes excerpt:"
+      echo "$body" | head -10
+      msg_warn "Please review the full release notes at:"
+      msg_warn "https://github.com/donetick/donetick/releases/tag/v${version}"
+      msg_warn "Your configuration backup will be preserved for manual review."
+      return 1
+    fi
+  fi
+  return 0
 }
 
 function create_updater_script() {
@@ -144,6 +185,8 @@ function create_updater_script() {
 INSTALL_DIR="/opt/donetick"
 VERSION_FILE="/opt/Donetick_version.txt"
 LOG_FILE="/var/log/donetick-updater.log"
+INSTALLER_URL="https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh"
+TEMP_INSTALLER="/tmp/donetick-installer-latest.sh"
 
 # Logging functions
 log_msg() {
@@ -154,6 +197,29 @@ log_msg() {
 if [[ $EUID -ne 0 ]]; then
   log_msg "ERROR: Updater must run as root"
   exit 1
+fi
+
+# Self-update check: Download latest installer and compare
+log_msg "INFO: Checking for updater script updates..."
+if curl -fsSL "$INSTALLER_URL" -o "$TEMP_INSTALLER" 2>/dev/null; then
+  # Compare current script with downloaded version
+  current_checksum=$(sha256sum "$0" 2>/dev/null | cut -d' ' -f1)
+  new_checksum=$(sha256sum "$TEMP_INSTALLER" 2>/dev/null | cut -d' ' -f1)
+  
+  if [[ "$current_checksum" != "$new_checksum" ]]; then
+    log_msg "INFO: Updater script has been updated, replacing and re-executing..."
+    chmod +x "$TEMP_INSTALLER"
+    # Replace self and re-execute
+    cp "$TEMP_INSTALLER" "$0"
+    rm -f "$TEMP_INSTALLER"
+    exec "$0" "$@"
+  else
+    log_msg "INFO: Updater script is current"
+    rm -f "$TEMP_INSTALLER"
+  fi
+else
+  log_msg "WARNING: Could not download latest installer for self-update check"
+  rm -f "$TEMP_INSTALLER"
 fi
 
 # Check if Donetick is installed
@@ -197,11 +263,40 @@ fi
 
 # Update available
 log_msg "INFO: Update available: $current_version → $latest_version"
+
+# Check for breaking changes
+log_msg "INFO: Checking for breaking changes in v${latest_version}..."
+release_notes=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/tags/v${latest_version}" 2>/dev/null)
+if [[ $? -eq 0 ]] && [[ -n "$release_notes" ]]; then
+  body=$(echo "$release_notes" | grep -o '"body":"[^"]*"' | sed 's/"body":"//;s/"$//' | sed 's/\\n/\n/g')
+  
+  # Check for breaking change indicators
+  if echo "$body" | grep -qi -E "(breaking|migration|config.change|incompatible|deprecated|database.migration)"; then
+    log_msg "WARNING: Potential breaking changes detected in v${latest_version}"
+    log_msg "WARNING: Update postponed - manual review required"
+    log_msg "WARNING: Configuration backup preserved for manual review"
+    log_msg "WARNING: See: https://github.com/donetick/donetick/releases/tag/v${latest_version}"
+    exit 1
+  fi
+fi
+
 log_msg "INFO: Starting automatic update..."
 
 # Download and run the installer script
-if curl -fsSL "https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh" | bash >> "$LOG_FILE" 2>&1; then
+if curl -fsSL "$INSTALLER_URL" | bash >> "$LOG_FILE" 2>&1; then
   log_msg "SUCCESS: Donetick updated to version $latest_version"
+  
+  # Ensure proper ownership after update
+  if [[ -d "$INSTALL_DIR" ]]; then
+    chown -R donetick:donetick "$INSTALL_DIR" 2>/dev/null || true
+    log_msg "INFO: File ownership updated"
+  fi
+  
+  # Set ownership on database if it exists
+  if [[ -f "$INSTALL_DIR/donetick.db" ]]; then
+    chown donetick:donetick "$INSTALL_DIR/donetick.db" 2>/dev/null || true
+    log_msg "INFO: Database file ownership updated"
+  fi
 else
   log_msg "ERROR: Update failed, check logs for details"
   exit 1
@@ -256,9 +351,24 @@ function install_donetick() {
   local current_version=$(get_current_version)
   local is_update=false
   
-  if [[ "$current_version" != "none" ]]; then
+  # Determine if this is an update (existing installation)
+  if [[ "$current_version" != "none" ]] && [[ -d "${INSTALL_DIR}" ]] && [[ -f "${INSTALL_DIR}/donetick" ]]; then
     is_update=true
+  fi
+  
+  if [[ "$is_update" == "true" ]]; then
     msg_info "Beginning Donetick update from version ${current_version}..."
+    
+    # Check for breaking changes before proceeding
+    local latest_version=$(get_latest_version)
+    if ! check_breaking_changes "$latest_version"; then
+      msg_warn "Breaking changes detected. Please review release notes before updating."
+      msg_warn "To force update anyway, use the --force flag"
+      if [[ "$force_install" != "true" ]]; then
+        exit 1
+      fi
+    fi
+    
     backup_config
   else
     msg_info "Beginning Donetick installation..."
@@ -333,11 +443,28 @@ function install_donetick() {
     msg_ok "Donetick v${LATEST_VERSION} installed successfully."
   fi
 
-  # Step 5: Create Configuration (only if not updating)
-  if [[ "$is_update" == "false" ]]; then
-    msg_info "Creating configuration file..."
-    mkdir -p "${CONFIG_DIR}"
-    JWT_SECRET=$(openssl rand -base64 32)
+  # Step 5: Handle Configuration
+  mkdir -p "${CONFIG_DIR}"
+  
+  local config_restored=false
+  local config_needs_creation=false
+  
+  # For updates: try to restore config first
+  if [[ "$is_update" == "true" ]]; then
+    if restore_config; then
+      config_restored=true
+      msg_ok "Configuration restored from backup"
+    else
+      msg_warn "Could not restore configuration backup"
+      config_needs_creation=true
+    fi
+  fi
+  
+  # For fresh installations or failed restoration: create new config
+  if [[ "$is_update" == "false" ]] || [[ "$config_needs_creation" == "true" ]]; then
+    if [[ ! -f "${CONFIG_DIR}/selfhosted.yaml" ]]; then
+      msg_info "Creating configuration file..."
+      JWT_SECRET=$(openssl rand -base64 32)
 
     cat <<EOF > "${CONFIG_DIR}/selfhosted.yaml"
 # Donetick Self-Hosted Configuration
@@ -420,21 +547,38 @@ realtime:
   allowed_origins:
     - "*"
 EOF
-    msg_ok "Default configuration created at ${CONFIG_DIR}/selfhosted.yaml"
-  else
-    msg_info "Preserving existing configuration file..."
-    mkdir -p "${CONFIG_DIR}"
+      msg_ok "Default configuration created at ${CONFIG_DIR}/selfhosted.yaml"
+    else
+      msg_info "Preserving existing configuration file..."
+    fi
   fi
 
-  # Step 6: Set Permissions
-  msg_info "Setting file permissions..."
+  # Step 6: Set Comprehensive Permissions and Ownership
+  msg_info "Setting file permissions and ownership..."
+  
+  # Set ownership on entire directory structure
   chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"
+  
+  # Set directory permissions
   chmod 750 "${INSTALL_DIR}"
+  chmod 750 "${CONFIG_DIR}"
+  
+  # Set file permissions
   if [[ -f "${CONFIG_DIR}/selfhosted.yaml" ]]; then
     chmod 640 "${CONFIG_DIR}/selfhosted.yaml"
+    chown "${SERVICE_USER}":"${SERVICE_USER}" "${CONFIG_DIR}/selfhosted.yaml"
   fi
+  
+  # Ensure binary is executable and owned correctly
   chmod +x "${INSTALL_DIR}/donetick"
-  msg_ok "Permissions set."
+  chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/donetick"
+  
+  # Ensure version file has correct ownership
+  if [[ -f "${VERSION_FILE}" ]]; then
+    chown "${SERVICE_USER}":"${SERVICE_USER}" "${VERSION_FILE}"
+  fi
+  
+  msg_ok "Permissions and ownership set."
 
   # Step 7: Create Systemd Service
   msg_info "Creating systemd service..."
@@ -476,6 +620,16 @@ EOF
   msg_info "Reloading systemd, enabling and starting Donetick service..."
   systemctl daemon-reload
   systemctl enable --now donetick
+  
+  # Wait a moment for service to start and set database ownership
+  sleep 2
+  
+  # Set ownership on any database files that may have been created
+  if [[ -f "${INSTALL_DIR}/donetick.db" ]]; then
+    chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/donetick.db"
+    msg_info "Database file ownership set"
+  fi
+  
   msg_ok "Donetick service started and enabled on boot."
 
   # Step 9: Create Credentials File
