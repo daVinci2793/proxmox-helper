@@ -16,7 +16,13 @@
 set -euo pipefail
 
 # Script directory for relative paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Determine script directory - handle both file execution and curl piping
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    # When running via curl, use current directory or create temp directory
+    SCRIPT_DIR="$(pwd)"
+fi
 
 # Source common library first
 if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
@@ -222,6 +228,7 @@ main() {
 }
 
 # Only run main if script is executed directly (not sourced)
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# Handle both file execution and curl piping contexts
+if [[ -z "${BASH_SOURCE[0]:-}" ]] || [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
   main "$@"
 fi
