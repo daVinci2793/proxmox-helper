@@ -1,0 +1,30 @@
+[Unit]
+Description=Donetick Task Manager
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${INSTALL_DIR}/donetick
+Environment="DT_ENV=selfhosted"
+Environment="DT_CONFIG_PATH=${CONFIG_DIR}/selfhosted.yaml"
+Restart=always
+RestartSec=5
+
+# Security Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/donetick/config /opt/donetick
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

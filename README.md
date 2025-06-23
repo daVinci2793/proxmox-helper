@@ -1,6 +1,63 @@
-# Donetick Standalone Installer & Updater
+# Donetick Modular Installer & Updater
 
-This script installs and updates [Donetick](https://github.com/donetick/donetick), an open-source task and chore management application, directly onto a Debian-based system. It supports fresh installations, updates, and automatic periodic updates via cron.
+This repository contains a modular installer system for [Donetick](https://github.com/donetick/donetick), an open-source task and chore management application. The installer features a completely refactored modular architecture for better maintainability, with separate libraries for different functionality areas.
+
+## Architecture
+
+The installer now uses a modular architecture with the following components:
+
+### Core Libraries (`lib/`)
+
+- **`common.sh`** - Shared utilities, logging, and configuration constants
+- **`github.sh`** - GitHub API interactions and release management
+- **`system.sh`** - System operations (user creation, permissions, architecture detection)
+- **`config.sh`** - Configuration file management and backup/restore
+- **`service.sh`** - Systemd service management and auto-updater setup
+
+### Operation Scripts (`scripts/`)
+
+- **`install.sh`** - Fresh installation logic
+- **`update.sh`** - Update existing installation logic
+- **`auto-updater.sh`** - Automatic updater for cron jobs
+
+### Templates (`templates/`)
+
+- **`donetick.service`** - Systemd service template
+- **`selfhosted.yaml`** - Configuration file template
+
+### Main Script
+
+- **`donetick.sh`** - Main orchestrator that determines and executes the appropriate operation
+
+## Key Improvements
+
+### Modular Architecture
+
+- **Separation of Concerns**: Each library handles specific functionality (GitHub API, system operations, configuration, etc.)
+- **Reusability**: Libraries can be used independently and tested separately
+- **Maintainability**: Easier to update and maintain individual components
+- **Remote Loading**: Libraries and templates can be downloaded from remote sources if not available locally
+
+### Smart Configuration Management
+
+- **Backup & Restore**: Automatically backs up configuration during updates and restores it
+- **Breaking Change Detection**: Checks release notes for breaking changes before updating
+- **Template System**: Configuration templates can be stored remotely and customized during installation
+
+### Enhanced Update System
+
+- **Intelligent Updates**: Only updates when newer versions are available
+- **Self-Updating Updater**: The auto-updater script can update itself
+- **Comprehensive Ownership**: Ensures proper file ownership throughout the installation and update process
+- **Graceful Failure Handling**: Better error handling and recovery options
+- **Breaking Change Detection**: Automatically scans release notes and preserves configurations when needed
+- **Template-Based Configuration**: Uses remote templates for consistency across installations
+
+### Default Behavior
+
+- **Fresh Installation**: If Donetick is not installed, performs a fresh installation
+- **Automatic Updates**: If Donetick is installed but not the latest version, performs an update
+- **Force Options**: Can force reinstallation or updates regardless of current state
 
 ## About Donetick
 
@@ -64,9 +121,8 @@ The script will automatically:
 
 - **Install Directory**: `/opt/donetick`
 - **Port**: `2021`
-- **Database**: SQLite (stored in `/opt/donetick/data/donetick.db`)
+- **Database**: SQLite (stored in `/opt/donetick/donetick.db`)
 - **Config File**: `/opt/donetick/config/selfhosted.yaml`
-- **Data Directory**: `/opt/donetick/data`
 - **Service User**: `donetick`
 
 ## First Time Setup
@@ -126,7 +182,7 @@ oauth2:
   auth_url: "https://accounts.google.com/o/oauth2/auth"
   token_url: "https://oauth2.googleapis.com/token"
   user_info_url: "https://www.googleapis.com/oauth2/v2/userinfo"
-  redirect_url: "http://your-domain:2021/auth/callback"
+  redirect_url: "http://your-donetick-instance.com/auth/oauth2"
 ```
 
 #### Email Notifications
@@ -227,13 +283,32 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-help
 
 During updates, the script:
 
-1. Automatically backs up your current configuration
-2. Stops the Donetick service
-3. Downloads and installs the new version
-4. Preserves your existing configuration and data
-5. Restarts the service with the new version
+1. **Checks for breaking changes** in release notes
+2. **Automatically backs up** your current configuration
+3. **Stops the Donetick service** safely
+4. **Downloads and installs** the new version
+5. **Restores your configuration** from backup (unless breaking changes detected)
+6. **Sets proper ownership** on all files and database
+7. **Restarts the service** with the new version
 
 Configuration backups are stored as: `/opt/donetick/config/selfhosted.yaml.backup.YYYYMMDD_HHMMSS`
+
+### Breaking Change Detection
+
+The update system includes intelligent breaking change detection:
+
+- **Automatic Scanning**: Checks release notes for keywords like "breaking", "migration", "config change"
+- **Preserved Backups**: If breaking changes are detected, your configuration backup is preserved
+- **Manual Review Required**: Updates with breaking changes require manual intervention
+- **Clear Guidance**: Provides links to release notes for review
+
+If breaking changes are detected, you'll see a warning like:
+
+```bash
+WARNING: Potential breaking changes detected in v2.0.0
+WARNING: Configuration backup preserved for manual review
+WARNING: See: https://github.com/donetick/donetick/releases/tag/v2.0.0
+```
 
 ## Automatic Update System
 
@@ -281,7 +356,7 @@ rm /etc/cron.d/donetick-updates /usr/local/bin/donetick-updater
 
 ```bash
 # Create backup
-sqlite3 /opt/donetick/data/donetick.db ".backup /opt/donetick/data/donetick_backup_$(date +%Y%m%d_%H%M%S).db"
+sqlite3 /opt/donetick/donetick.db ".backup /opt/donetick/donetick_backup_$(date +%Y%m%d_%H%M%S).db"
 ```
 
 ### Restore Database
@@ -291,10 +366,10 @@ sqlite3 /opt/donetick/data/donetick.db ".backup /opt/donetick/data/donetick_back
 systemctl stop donetick
 
 # Restore backup
-cp /opt/donetick/data/donetick_backup_YYYYMMDD_HHMMSS.db /opt/donetick/data/donetick.db
+cp /opt/donetick/donetick_backup_YYYYMMDD_HHMMSS.db /opt/donetick/donetick.db
 
 # Set permissions
-chown donetick:donetick /opt/donetick/data/donetick.db
+chown donetick:donetick /opt/donetick/donetick.db
 
 # Start service
 systemctl start donetick
@@ -358,12 +433,14 @@ Generate an API token in the Donetick web interface under Settings > API.
 1. Check the logs: `journalctl -u donetick -f`
 2. Verify configuration: `nano /opt/donetick/config/selfhosted.yaml`
 3. Check permissions: `ls -la /opt/donetick/`
+4. Verify file ownership: `ls -la /opt/donetick/donetick.db`
+5. Fix ownership if needed: `sudo chown -R donetick:donetick /opt/donetick`
 
 ### Database Issues
 
-1. Check if database file exists: `ls -la /opt/donetick/data/`
+1. Check if database file exists: `ls -la /opt/donetick/donetick.db`
 2. Verify SQLite installation: `sqlite3 --version`
-3. Test database connectivity: `sqlite3 /opt/donetick/data/donetick.db ".tables"`
+3. Test database connectivity: `sqlite3 /opt/donetick/donetick.db ".tables"`
 
 ### Update Issues
 

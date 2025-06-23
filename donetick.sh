@@ -1,679 +1,100 @@
 #!/usr/bin/env bash
 #
-# Donetick Standalone Installer & Updater
+# Donetick Main Installer & Updater
 #
-# Description: Installs/updates Donetick, an open-source task manager, on a Debian-based system.
+# Description: Modular installer/updater for Donetick, an open-source task manager.
 # Features: 
 #   - Fresh installation
 #   - Update existing installation
 #   - Automatic periodic updates via cron
+#   - Modular architecture with separate libraries
 # Author: daVinci
 # License: MIT
 # Repository: https://github.com/donetick/donetick
 #
 
-# --- Configuration ---
-APP_NAME="Donetick"
-INSTALL_DIR="/opt/donetick"
-CONFIG_DIR="${INSTALL_DIR}/config"
-SERVICE_USER="donetick"
-SERVICE_FILE="/etc/systemd/system/donetick.service"
-VERSION_FILE="/opt/${APP_NAME}_version.txt"
-UPDATER_SCRIPT="/usr/local/bin/donetick-updater"
-CRON_FILE="/etc/cron.d/donetick-updates"
+set -euo pipefail
 
-# --- Colors for Logging ---
-YW=$(echo -e '\033[33m')
-BL=$(echo -e '\033[36m')
-RD=$(echo -e '\033[01;31m')
-GN=$(echo -e '\033[1;92m')
-CL=$(echo -e '\033[0m')
+# Script directory for relative paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- Logging Functions ---
-msg_info() { echo -e "${BL}[INFO]${CL} $@"; }
-msg_ok() { echo -e "${GN}[OK]${CL} $@"; }
-msg_warn() { echo -e "${YW}[WARN]${CL} $@"; }
-msg_error() { echo -e "${RD}[ERROR]${CL} $@"; exit 1; }
-
-# --- Utility Functions ---
-function get_current_version() {
-  if [[ -f "${VERSION_FILE}" ]]; then
-    cat "${VERSION_FILE}"
-  else
-    echo "none"
-  fi
-}
-
-function get_latest_version() {
-  local release_info=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest" 2>/dev/null)
-  if [[ $? -eq 0 ]] && [[ -n "$release_info" ]]; then
-    local version=$(echo "$release_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
-    # Remove any leading 'v' from version if it exists
-    echo "${version#v}"
-  else
-    echo ""
-  fi
-}
-
-function get_latest_tag() {
-  local release_info=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest" 2>/dev/null)
-  if [[ $? -eq 0 ]] && [[ -n "$release_info" ]]; then
-    echo "$release_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}'
-  else
-    echo ""
-  fi
-}
-
-function version_compare() {
-  # Returns: 0 if equal, 1 if v1 > v2, 2 if v1 < v2
-  local v1="$1"
-  local v2="$2"
-  
-  if [[ "$v1" == "$v2" ]]; then
-    return 0
-  fi
-  
-  # Use sort -V for version comparison
-  local sorted=$(printf '%s\n%s\n' "$v1" "$v2" | sort -V)
-  local first=$(echo "$sorted" | head -n1)
-  
-  if [[ "$first" == "$v1" ]]; then
-    return 2  # v1 < v2
-  else
-    return 1  # v1 > v2
-  fi
-}
-
-function check_for_updates() {
-  msg_info "Checking for updates..."
-  
-  local current_version=$(get_current_version)
-  local latest_version=$(get_latest_version)
-  
-  if [[ -z "$latest_version" ]]; then
-    msg_warn "Could not fetch latest version information from GitHub."
-    return 1
-  fi
-  
-  msg_info "Current version: ${current_version}"
-  msg_info "Latest version:  ${latest_version}"
-  
-  if [[ "$current_version" == "none" ]]; then
-    msg_info "No existing installation found. Will perform fresh installation."
-    return 0
-  fi
-  
-  version_compare "$current_version" "$latest_version"
-  local result=$?
-  
-  case $result in
-    0)
-      msg_ok "Already running the latest version (${current_version})"
-      return 1
-      ;;
-    1)
-      msg_warn "Current version (${current_version}) is newer than latest release (${latest_version})"
-      return 1
-      ;;
-    2)
-      msg_info "Update available: ${current_version} → ${latest_version}"
-      return 0
-      ;;
-  esac
-}
-
-function backup_config() {
-  local backup_file="${CONFIG_DIR}/selfhosted.yaml.backup.$(date +%Y%m%d_%H%M%S)"
-  if [[ -f "${CONFIG_DIR}/selfhosted.yaml" ]]; then
-    msg_info "Backing up existing configuration..."
-    cp "${CONFIG_DIR}/selfhosted.yaml" "$backup_file"
-    msg_ok "Configuration backed up to: $backup_file"
-    # Store backup path for restoration
-    echo "$backup_file" > "${CONFIG_DIR}/.last_backup"
-  fi
-}
-
-function restore_config() {
-  local backup_path
-  if [[ -f "${CONFIG_DIR}/.last_backup" ]]; then
-    backup_path=$(cat "${CONFIG_DIR}/.last_backup")
-    if [[ -f "$backup_path" ]]; then
-      msg_info "Restoring configuration from backup..."
-      cp "$backup_path" "${CONFIG_DIR}/selfhosted.yaml"
-      chown "${SERVICE_USER}":"${SERVICE_USER}" "${CONFIG_DIR}/selfhosted.yaml"
-      chmod 640 "${CONFIG_DIR}/selfhosted.yaml"
-      msg_ok "Configuration restored from backup"
-      rm -f "${CONFIG_DIR}/.last_backup"
-      return 0
-    fi
-  fi
-  return 1
-}
-
-function check_breaking_changes() {
-  local version="$1"
-  msg_info "Checking for breaking changes in v${version}..."
-  
-  local release_notes=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/tags/v${version}" 2>/dev/null)
-  if [[ $? -eq 0 ]] && [[ -n "$release_notes" ]]; then
-    local body=$(echo "$release_notes" | grep -o '"body":"[^"]*"' | sed 's/"body":"//;s/"$//' | sed 's/\\n/\n/g')
-    
-    # Check for breaking change indicators
-    if echo "$body" | grep -qi -E "(breaking|migration|config.change|incompatible|deprecated|database.migration)"; then
-      msg_warn "Potential breaking changes detected in v${version}!"
-      msg_warn "Release notes excerpt:"
-      echo "$body" | head -10
-      msg_warn "Please review the full release notes at:"
-      msg_warn "https://github.com/donetick/donetick/releases/tag/v${version}"
-      msg_warn "Your configuration backup will be preserved for manual review."
-      return 1
-    fi
-  fi
-  return 0
-}
-
-function create_updater_script() {
-  msg_info "Creating automatic updater script..."
-  
-  cat <<'EOF' > "${UPDATER_SCRIPT}"
-#!/usr/bin/env bash
-#
-# Donetick Automatic Updater
-# This script is called by cron to check for and install updates
-#
-
-INSTALL_DIR="/opt/donetick"
-VERSION_FILE="/opt/Donetick_version.txt"
-LOG_FILE="/var/log/donetick-updater.log"
-INSTALLER_URL="https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh"
-TEMP_INSTALLER="/tmp/donetick-installer-latest.sh"
-
-# Logging functions
-log_msg() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $@" | tee -a "$LOG_FILE"
-}
-
-# Check if we're root
-if [[ $EUID -ne 0 ]]; then
-  log_msg "ERROR: Updater must run as root"
-  exit 1
-fi
-
-# Self-update check: Download latest installer and compare
-log_msg "INFO: Checking for updater script updates..."
-if curl -fsSL "$INSTALLER_URL" -o "$TEMP_INSTALLER" 2>/dev/null; then
-  # Compare current script with downloaded version
-  current_checksum=$(sha256sum "$0" 2>/dev/null | cut -d' ' -f1)
-  new_checksum=$(sha256sum "$TEMP_INSTALLER" 2>/dev/null | cut -d' ' -f1)
-  
-  if [[ "$current_checksum" != "$new_checksum" ]]; then
-    log_msg "INFO: Updater script has been updated, replacing and re-executing..."
-    chmod +x "$TEMP_INSTALLER"
-    # Replace self and re-execute
-    cp "$TEMP_INSTALLER" "$0"
-    rm -f "$TEMP_INSTALLER"
-    exec "$0" "$@"
-  else
-    log_msg "INFO: Updater script is current"
-    rm -f "$TEMP_INSTALLER"
-  fi
+# Source common library first
+if [[ -f "${SCRIPT_DIR}/lib/common.sh" ]]; then
+  source "${SCRIPT_DIR}/lib/common.sh"
 else
-  log_msg "WARNING: Could not download latest installer for self-update check"
-  rm -f "$TEMP_INSTALLER"
-fi
-
-# Check if Donetick is installed
-if [[ ! -f "$VERSION_FILE" ]] || [[ ! -d "$INSTALL_DIR" ]]; then
-  log_msg "INFO: Donetick not found, skipping update check"
-  exit 0
-fi
-
-# Get current and latest versions
-current_version=$(cat "$VERSION_FILE" 2>/dev/null || echo "unknown")
-latest_info=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/latest" 2>/dev/null)
-
-if [[ $? -ne 0 ]] || [[ -z "$latest_info" ]]; then
-  log_msg "WARNING: Could not fetch latest version from GitHub"
-  exit 1
-fi
-
-latest_tag=$(echo "$latest_info" | grep "tag_name" | awk '{print substr($2, 2, length($2)-3)}')
-# Keep the original tag for URL, but clean version for comparison
-latest_version=${latest_tag#v}
-
-if [[ -z "$latest_version" ]]; then
-  log_msg "WARNING: Could not parse latest version"
-  exit 1
-fi
-
-# Version comparison
-if [[ "$current_version" == "$latest_version" ]]; then
-  log_msg "INFO: Already running latest version ($current_version)"
-  exit 0
-fi
-
-# Use sort for version comparison
-sorted=$(printf '%s\n%s\n' "$current_version" "$latest_version" | sort -V)
-first=$(echo "$sorted" | head -n1)
-
-if [[ "$first" != "$current_version" ]]; then
-  log_msg "INFO: Current version ($current_version) is newer than release ($latest_version)"
-  exit 0
-fi
-
-# Update available
-log_msg "INFO: Update available: $current_version → $latest_version"
-
-# Check for breaking changes
-log_msg "INFO: Checking for breaking changes in v${latest_version}..."
-release_notes=$(curl -fsSL "https://api.github.com/repos/donetick/donetick/releases/tags/v${latest_version}" 2>/dev/null)
-if [[ $? -eq 0 ]] && [[ -n "$release_notes" ]]; then
-  body=$(echo "$release_notes" | grep -o '"body":"[^"]*"' | sed 's/"body":"//;s/"$//' | sed 's/\\n/\n/g')
-  
-  # Check for breaking change indicators
-  if echo "$body" | grep -qi -E "(breaking|migration|config.change|incompatible|deprecated|database.migration)"; then
-    log_msg "WARNING: Potential breaking changes detected in v${latest_version}"
-    log_msg "WARNING: Update postponed - manual review required"
-    log_msg "WARNING: Configuration backup preserved for manual review"
-    log_msg "WARNING: See: https://github.com/donetick/donetick/releases/tag/v${latest_version}"
+  # Fallback: try to download common library
+  echo "Downloading common library..."
+  BASE_URL="${DONETICK_BASE_URL:-https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main}"
+  TEMP_COMMON="/tmp/donetick-common.sh"
+  if curl -fsSL "${BASE_URL}/lib/common.sh" -o "$TEMP_COMMON" 2>/dev/null; then
+    source "$TEMP_COMMON"
+    rm -f "$TEMP_COMMON"
+  else
+    echo "ERROR: Could not load common library"
     exit 1
   fi
 fi
 
-log_msg "INFO: Starting automatic update..."
-
-# Download and run the installer script
-if curl -fsSL "$INSTALLER_URL" | bash >> "$LOG_FILE" 2>&1; then
-  log_msg "SUCCESS: Donetick updated to version $latest_version"
-  
-  # Ensure proper ownership after update
-  if [[ -d "$INSTALL_DIR" ]]; then
-    chown -R donetick:donetick "$INSTALL_DIR" 2>/dev/null || true
-    log_msg "INFO: File ownership updated"
-  fi
-  
-  # Set ownership on database if it exists
-  if [[ -f "$INSTALL_DIR/donetick.db" ]]; then
-    chown donetick:donetick "$INSTALL_DIR/donetick.db" 2>/dev/null || true
-    log_msg "INFO: Database file ownership updated"
-  fi
-else
-  log_msg "ERROR: Update failed, check logs for details"
-  exit 1
-fi
-EOF
-
-  chmod +x "${UPDATER_SCRIPT}"
-  msg_ok "Updater script created at ${UPDATER_SCRIPT}"
+# Load additional libraries
+load_libraries() {
+  source_library "github"
+  source_library "system"
+  source_library "config"
+  source_library "service"
 }
 
-function setup_automatic_updates() {
-  msg_info "Setting up automatic updates..."
+# Source operation scripts
+source_operation_script() {
+  local script_name="$1"
+  local script_path="scripts/${script_name}.sh"
+  local remote_url="${BASE_URL}/${script_path}"
   
-  # Create the updater script
-  create_updater_script
-  
-  # Create cron job (runs daily at 3 AM)
-  cat <<EOF > "${CRON_FILE}"
-# Donetick Automatic Updates
-# Runs daily at 3:00 AM to check for and install updates
-0 3 * * * root ${UPDATER_SCRIPT} >/dev/null 2>&1
-EOF
-  
-  # Ensure cron service is enabled
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable cron >/dev/null 2>&1 || systemctl enable cronie >/dev/null 2>&1 || true
+  # Try local file first
+  if [[ -f "${SCRIPT_DIR}/${script_path}" ]]; then
+    source "${SCRIPT_DIR}/${script_path}"
+  else
+    # Download and source from remote
+    local temp_file="/tmp/donetick-${script_name}.sh"
+    if download_file "$remote_url" "$temp_file" "${script_name} script"; then
+      source "$temp_file"
+      rm -f "$temp_file"
+    else
+      msg_error "Could not load required script: $script_name"
+    fi
   fi
-  
-  msg_ok "Automatic updates configured (daily at 3:00 AM)"
-  msg_info "Logs will be written to: /var/log/donetick-updater.log"
 }
 
-# --- Pre-run Checks ---
-function pre_run_checks() {
+# --- Main Execution Functions ---
+run_pre_checks() {
   msg_info "Performing pre-run checks..."
-  # Check for root privileges
-  if [[ $EUID -ne 0 ]]; then
-    msg_error "This script must be run as root. Please use 'sudo'."
-  fi
-
-  # Check for systemd
-  if ! command -v systemctl >/dev/null 2>&1; then
-    msg_error "This script requires systemd, which was not found on this system."
-  fi
+  check_root
+  check_systemd
   msg_ok "Pre-run checks passed."
 }
 
-# --- Installation Steps ---
-function install_donetick() {
-  set -e # Exit immediately if a command exits with a non-zero status.
-
-  local current_version=$(get_current_version)
-  local is_update=false
-  
-  # Determine if this is an update (existing installation)
-  if [[ "$current_version" != "none" ]] && [[ -d "${INSTALL_DIR}" ]] && [[ -f "${INSTALL_DIR}/donetick" ]]; then
-    is_update=true
-  fi
-  
-  if [[ "$is_update" == "true" ]]; then
-    msg_info "Beginning Donetick update from version ${current_version}..."
-    
-    # Check for breaking changes before proceeding
-    local latest_version=$(get_latest_version)
-    if ! check_breaking_changes "$latest_version"; then
-      msg_warn "Breaking changes detected. Please review release notes before updating."
-      msg_warn "To force update anyway, use the --force flag"
-      if [[ "$force_install" != "true" ]]; then
-        exit 1
-      fi
-    fi
-    
-    backup_config
+determine_operation() {
+  if is_donetick_installed; then
+    echo "update"
   else
-    msg_info "Beginning Donetick installation..."
+    echo "install"
   fi
-
-  # Step 1: Install Dependencies
-  msg_info "Updating package lists and installing dependencies..."
-  apt-get update >/dev/null
-  apt-get install -y curl sqlite3 gpg ca-certificates openssl cron >/dev/null
-  msg_ok "Dependencies installed successfully."
-
-  # Step 2: Create Application User
-  msg_info "Creating system user '${SERVICE_USER}'..."
-  if id "${SERVICE_USER}" &>/dev/null; then
-    msg_warn "User '${SERVICE_USER}' already exists. Skipping creation."
-  else
-    useradd -r -s /bin/false -d "${INSTALL_DIR}" "${SERVICE_USER}"
-    msg_ok "System user '${SERVICE_USER}' created."
-  fi
-
-  # Step 3: Stop existing service if updating
-  if systemctl is-active --quiet donetick; then
-    msg_info "Donetick is running. Stopping service for update..."
-    systemctl stop donetick
-    msg_ok "Service stopped."
-  fi
-
-  # Step 4: Download and Install Donetick
-  msg_info "Fetching latest release information from GitHub..."
-  LATEST_TAG=$(get_latest_tag)
-  
-  # Clean version for display and storage
-  LATEST_VERSION=${LATEST_TAG#v}
-  
-  msg_info "Latest tag from GitHub: '${LATEST_TAG}'"
-  msg_info "Parsed version: ${LATEST_VERSION}"
-  
-  if [ -z "$LATEST_VERSION" ]; then
-    msg_error "Could not determine latest Donetick version. Aborting."
-  fi
-
-  ARCH=$(dpkg --print-architecture)
-  DOWNLOAD_ARCH=""
-  case $ARCH in
-    amd64) DOWNLOAD_ARCH="x86_64" ;;
-    arm64) DOWNLOAD_ARCH="arm64" ;;
-    armhf) DOWNLOAD_ARCH="armv7" ;;
-    *) msg_error "Unsupported architecture: ${ARCH}. Cannot continue." ;;
-  esac
-
-  DOWNLOAD_URL="https://github.com/donetick/donetick/releases/download/${LATEST_TAG}/donetick_Linux_${DOWNLOAD_ARCH}.tar.gz"
-
-  if [[ "$is_update" == "true" ]]; then
-    msg_info "Updating Donetick to v${LATEST_VERSION} for ${ARCH}..."
-  else
-    msg_info "Downloading Donetick v${LATEST_VERSION} for ${ARCH}..."
-  fi
-  
-  msg_info "Download URL: ${DOWNLOAD_URL}"
-  
-  mkdir -p "${INSTALL_DIR}"
-  curl -fsSL "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/donetick.tar.gz"
-  
-  msg_info "Extracting archive..."
-  tar -xzf "${INSTALL_DIR}/donetick.tar.gz" -C "${INSTALL_DIR}"
-  rm "${INSTALL_DIR}/donetick.tar.gz"
-  echo "${LATEST_VERSION}" > "${VERSION_FILE}"
-  
-  if [[ "$is_update" == "true" ]]; then
-    msg_ok "Donetick updated to v${LATEST_VERSION} successfully."
-  else
-    msg_ok "Donetick v${LATEST_VERSION} installed successfully."
-  fi
-
-  # Step 5: Handle Configuration
-  mkdir -p "${CONFIG_DIR}"
-  
-  local config_restored=false
-  local config_needs_creation=false
-  
-  # For updates: try to restore config first
-  if [[ "$is_update" == "true" ]]; then
-    if restore_config; then
-      config_restored=true
-      msg_ok "Configuration restored from backup"
-    else
-      msg_warn "Could not restore configuration backup"
-      config_needs_creation=true
-    fi
-  fi
-  
-  # For fresh installations or failed restoration: create new config
-  if [[ "$is_update" == "false" ]] || [[ "$config_needs_creation" == "true" ]]; then
-    if [[ ! -f "${CONFIG_DIR}/selfhosted.yaml" ]]; then
-      msg_info "Creating configuration file..."
-      JWT_SECRET=$(openssl rand -base64 32)
-
-    cat <<EOF > "${CONFIG_DIR}/selfhosted.yaml"
-# Donetick Self-Hosted Configuration
-# Generated by installer on $(date)
-# For more options, see: https://github.com/donetick/donetick/blob/main/config/selfhosted.yaml.dist
-
-name: "selfhosted"
-is_done_tick_dot_com: false
-is_user_creation_disabled: false
-
-# Database Configuration
-database:
-  type: "sqlite"
-  migration: true
-
-# JWT Authentication
-jwt:
-  secret: "${JWT_SECRET}"
-  session_time: 168h
-  max_refresh: 168h
-
-# Server Configuration
-server:
-  port: 2021
-  read_timeout: 10s
-  write_timeout: 10s
-  rate_period: 60s
-  rate_limit: 300
-  cors_allow_origins:
-    - "http://localhost:5173"
-    - "http://localhost:7926"
-    - "https://localhost"
-    - "capacitor://localhost"
-  serve_frontend: true
-
-# Logging Configuration
-logging:
-  level: "info"
-  encoding: "json"
-  development: false
-
-# Scheduler Jobs
-scheduler_jobs:
-  due_job: 30m
-  overdue_job: 3h
-  pre_due_job: 3h
-
-# Email Configuration
-email:
-  host: 
-  port: 
-  key: 
-  email:  
-  appHost:  
-
-# OAuth2 Configuration
-oauth2:
-  client_id: 
-  client_secret: 
-  auth_url: 
-  token_url: 
-  user_info_url: 
-  redirect_url: 
-  name:
-
-# Real-time Configuration
-realtime:
-  enabled: true
-  websocket_enabled: false
-  sse_enabled: true
-  heartbeat_interval: 60s
-  connection_timeout: 120s
-  max_connections: 1000
-  max_connections_per_user: 5
-  event_queue_size: 2048
-  cleanup_interval: 2m
-  stale_threshold: 5m
-  enable_compression: true
-  enable_stats: true
-  allowed_origins:
-    - "*"
-EOF
-      msg_ok "Default configuration created at ${CONFIG_DIR}/selfhosted.yaml"
-    else
-      msg_info "Preserving existing configuration file..."
-    fi
-  fi
-
-  # Step 6: Set Comprehensive Permissions and Ownership
-  msg_info "Setting file permissions and ownership..."
-  
-  # Set ownership on entire directory structure
-  chown -R "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}"
-  
-  # Set directory permissions
-  chmod 750 "${INSTALL_DIR}"
-  chmod 750 "${CONFIG_DIR}"
-  
-  # Set file permissions
-  if [[ -f "${CONFIG_DIR}/selfhosted.yaml" ]]; then
-    chmod 640 "${CONFIG_DIR}/selfhosted.yaml"
-    chown "${SERVICE_USER}":"${SERVICE_USER}" "${CONFIG_DIR}/selfhosted.yaml"
-  fi
-  
-  # Ensure binary is executable and owned correctly
-  chmod +x "${INSTALL_DIR}/donetick"
-  chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/donetick"
-  
-  # Ensure version file has correct ownership
-  if [[ -f "${VERSION_FILE}" ]]; then
-    chown "${SERVICE_USER}":"${SERVICE_USER}" "${VERSION_FILE}"
-  fi
-  
-  msg_ok "Permissions and ownership set."
-
-  # Step 7: Create Systemd Service
-  msg_info "Creating systemd service..."
-  cat <<EOF > "${SERVICE_FILE}"
-[Unit]
-Description=Donetick Task Manager
-After=network.target
-Wants=network.target
-
-[Service]
-Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_USER}
-WorkingDirectory=${INSTALL_DIR}
-ExecStart=${INSTALL_DIR}/donetick
-Environment="DT_ENV=selfhosted"
-Environment="DT_CONFIG_PATH=${CONFIG_DIR}/selfhosted.yaml"
-Restart=always
-RestartSec=5
-
-# Security Hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/donetick/config /opt/donetick
-CapabilityBoundingSet=
-AmbientCapabilities=
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  msg_ok "Systemd service file created at ${SERVICE_FILE}"
-
-  # Step 8: Start and Enable Service
-  msg_info "Reloading systemd, enabling and starting Donetick service..."
-  systemctl daemon-reload
-  systemctl enable --now donetick
-  
-  # Wait a moment for service to start and set database ownership
-  sleep 2
-  
-  # Set ownership on any database files that may have been created
-  if [[ -f "${INSTALL_DIR}/donetick.db" ]]; then
-    chown "${SERVICE_USER}":"${SERVICE_USER}" "${INSTALL_DIR}/donetick.db"
-    msg_info "Database file ownership set"
-  fi
-  
-  msg_ok "Donetick service started and enabled on boot."
-
-  # Step 9: Create Credentials File
-  msg_info "Creating credentials and information file..."
-  IP_ADDR=$(hostname -I | awk '{print $1}')
-  
-  # Get JWT secret from config if it exists
-  local jwt_secret="Check config file"
-  if [[ -f "${CONFIG_DIR}/selfhosted.yaml" ]] && [[ "$is_update" == "false" ]]; then
-    jwt_secret="${JWT_SECRET}"
-  fi
-  
-  cat <<EOF > /root/donetick.creds
-Donetick Installation Details
-=============================
-Version:      ${LATEST_VERSION}
-Access URL:   http://${IP_ADDR}:2021
-Install Dir:  ${INSTALL_DIR}
-Config File:  ${CONFIG_DIR}/selfhosted.yaml
-Data Dir:     ${DATA_DIR}
-JWT Secret:   ${jwt_secret}
-
-Service Management:
-- Start:   systemctl start donetick
-- Stop:    systemctl stop donetick
-- Restart: systemctl restart donetick
-- Status:  systemctl status donetick
-- Logs:    journalctl -u donetick -f
-
-Update Management:
-- Check for updates:  ${UPDATER_SCRIPT} (or re-run this script with --check)
-- Manual update:      Re-run this installation script
-- Auto-update logs:   /var/log/donetick-updater.log
-- Auto-update cron:   ${CRON_FILE}
-
-To update, simply re-run this script or use: ${UPDATER_SCRIPT}
-EOF
-  msg_ok "Installation details saved to /root/donetick.creds"
 }
 
-# --- Main Execution ---
-function show_help() {
+run_install() {
+  local force_install="$1"
+  source_operation_script "install"
+  install_donetick "$force_install"
+}
+
+run_update() {
+  local force_install="$1"
+  source_operation_script "update"
+  update_donetick "$force_install"
+}
+
+show_help() {
   cat << EOF
-Donetick Installer & Updater
+Donetick Installer & Updater (Modular Version)
 
 Usage: $0 [OPTIONS]
 
@@ -688,13 +109,24 @@ Examples:
   $0                      Install or update Donetick
   $0 --check             Check if updates are available
   $0 --force             Force reinstall current version
+
+Architecture:
+  This script uses a modular architecture with separate libraries:
+  - lib/common.sh         Common utilities and configuration
+  - lib/github.sh         GitHub API interactions
+  - lib/system.sh         System operations
+  - lib/config.sh         Configuration management
+  - lib/service.sh        Service management
+  - scripts/install.sh    Installation logic
+  - scripts/update.sh     Update logic
 EOF
 }
 
-function main() {
+main() {
   local check_only=false
   local force_install=false
   local setup_auto=true
+  local operation=""
   
   # Parse command line arguments
   while [[ $# -gt 0 ]]; do
@@ -725,38 +157,62 @@ function main() {
     esac
   done
   
-  pre_run_checks
+  # Load all required libraries
+  load_libraries
   
+  # Run pre-checks
+  run_pre_checks
+  
+  # Handle check-only mode
   if [[ "$check_only" == "true" ]]; then
     check_for_updates
     exit $?
   fi
   
+  # Determine what operation to perform
+  operation=$(determine_operation)
+  
   # Check for updates unless forced
-  if [[ "$force_install" == "false" ]]; then
+  if [[ "$force_install" == "false" ]] && [[ "$operation" == "update" ]]; then
     if ! check_for_updates; then
       msg_info "No action needed."
       exit 0
     fi
-  else
+  elif [[ "$force_install" == "true" ]]; then
     msg_info "Forcing installation/update..."
   fi
   
-  install_donetick
+  # Perform the operation
+  case $operation in
+    install)
+      run_install "$force_install"
+      ;;
+    update)
+      run_update "$force_install"
+      ;;
+    *)
+      msg_error "Unknown operation: $operation"
+      ;;
+  esac
   
-  # Setup automatic updates if requested and not in update-only mode
+  # Setup automatic updates if requested
   if [[ "$setup_auto" == "true" ]]; then
     setup_automatic_updates
   fi
 
+  # Show completion message
   echo
-  if [[ "$(get_current_version)" != "none" ]]; then
-    msg_ok "Donetick installation/update complete!"
-  else
+  local current_version=$(get_current_version)
+  if [[ "$operation" == "install" ]]; then
     msg_ok "Donetick installation complete!"
+  else
+    msg_ok "Donetick update complete!"
   fi
-  msg_info "You can now access Donetick at http://$(hostname -I | awk '{print $1}'):2021"
+  
+  local ip_addr=$(hostname -I | awk '{print $1}')
+  msg_info "You can now access Donetick at http://${ip_addr}:2021"
   msg_info "On first access, you will be prompted to create an admin account."
+  
   if [[ "$setup_auto" == "true" ]]; then
     msg_info "Automatic updates are enabled and will run daily at 3:00 AM."
     msg_info "Update logs: /var/log/donetick-updater.log"
@@ -765,4 +221,7 @@ function main() {
   echo
 }
 
-main "$@"
+# Only run main if script is executed directly (not sourced)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

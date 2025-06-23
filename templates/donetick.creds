@@ -1,0 +1,22 @@
+Donetick Installation Details
+=============================
+Version:      ${VERSION}
+Access URL:   http://${IP_ADDR}:2021
+Install Dir:  ${INSTALL_DIR}
+Config File:  ${CONFIG_DIR}/selfhosted.yaml
+JWT Secret:   ${JWT_SECRET}
+
+Service Management:
+- Start:   systemctl start donetick
+- Stop:    systemctl stop donetick
+- Restart: systemctl restart donetick
+- Status:  systemctl status donetick
+- Logs:    journalctl -u donetick -f
+
+Update Management:
+- Check for updates:  ${UPDATER_SCRIPT} (or re-run this script with --check)
+- Manual update:      Re-run this installation script
+- Auto-update logs:   /var/log/donetick-updater.log
+- Auto-update cron:   ${CRON_FILE}
+
+To update, simply re-run this script or use: ${UPDATER_SCRIPT}

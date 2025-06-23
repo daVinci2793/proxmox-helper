@@ -1,0 +1,3 @@
+# Donetick Automatic Updates
+# Runs daily at 3:00 AM to check for and install updates
+0 3 * * * root ${UPDATER_SCRIPT} >/dev/null 2>&1
