@@ -98,6 +98,12 @@ run_update() {
   update_donetick "$force_install"
 }
 
+run_postgres_migration() {
+  msg_info "Starting PostgreSQL migration..."
+  source_library "database"
+  interactive_postgres_migration
+}
+
 show_help() {
   cat << EOF
 Donetick Installer & Updater (Modular Version)
@@ -110,11 +116,13 @@ OPTIONS:
   -f, --force             Force installation/update even if up to date
   --setup-auto-updates    Setup automatic updates (runs with install by default)
   --disable-auto-updates  Disable automatic updates
+  --migrate-to-postgres   Migrate existing SQLite database to PostgreSQL
 
 Examples:
   $0                      Install or update Donetick
   $0 --check             Check if updates are available
   $0 --force             Force reinstall current version
+  $0 --migrate-to-postgres  Migrate SQLite database to PostgreSQL
 
 Architecture:
   This script uses a modular architecture with separate libraries:
@@ -123,6 +131,7 @@ Architecture:
   - lib/system.sh         System operations
   - lib/config.sh         Configuration management
   - lib/service.sh        Service management
+  - lib/database.sh       Database migration operations
   - scripts/install.sh    Installation logic
   - scripts/update.sh     Update logic
 EOF
@@ -132,6 +141,7 @@ main() {
   local check_only=false
   local force_install=false
   local setup_auto=true
+  local migrate_postgres=false
   local operation=""
   
   # Parse command line arguments
@@ -157,6 +167,10 @@ main() {
         setup_auto=false
         shift
         ;;
+      --migrate-to-postgres)
+        migrate_postgres=true
+        shift
+        ;;
       *)
         msg_error "Unknown option: $1. Use --help for usage information."
         ;;
@@ -168,6 +182,12 @@ main() {
   
   # Run pre-checks
   run_pre_checks
+  
+  # Handle PostgreSQL migration mode
+  if [[ "$migrate_postgres" == "true" ]]; then
+    run_postgres_migration
+    exit $?
+  fi
   
   # Handle check-only mode
   if [[ "$check_only" == "true" ]]; then

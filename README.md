@@ -13,6 +13,7 @@ The installer now uses a modular architecture with the following components:
 - **`system.sh`** - System operations (user creation, permissions, architecture detection)
 - **`config.sh`** - Configuration file management and backup/restore
 - **`service.sh`** - Systemd service management and auto-updater setup
+- **`database.sh`** - Database migration operations and PostgreSQL support
 
 ### Operation Scripts (`scripts/`)
 
@@ -23,7 +24,13 @@ The installer now uses a modular architecture with the following components:
 ### Templates (`templates/`)
 
 - **`donetick.service`** - Systemd service template
-- **`selfhosted.yaml`** - Configuration file template
+- **`selfhosted.yaml`** - Configuration file template (SQLite)
+- **`selfhosted-postgres.yaml`** - Configuration file template (PostgreSQL)
+
+### Migration Tools
+
+- **`migrate-postgres.sh`** - Standalone PostgreSQL migration script
+- **`MIGRATION-GUIDE.md`** - Comprehensive migration documentation
 
 ### Main Script
 
@@ -58,6 +65,14 @@ The installer now uses a modular architecture with the following components:
 - **Fresh Installation**: If Donetick is not installed, performs a fresh installation
 - **Automatic Updates**: If Donetick is installed but not the latest version, performs an update
 - **Force Options**: Can force reinstallation or updates regardless of current state
+
+### Database Migration Support
+
+- **SQLite to PostgreSQL**: Seamlessly migrate from SQLite to PostgreSQL
+- **Interactive Migration**: Guided setup with connection testing
+- **Data Preservation**: Comprehensive backup and restore capabilities
+- **Configuration Management**: Automatic config updates during migration
+- **Verification**: Post-migration data integrity checks
 
 ## About Donetick
 
@@ -103,6 +118,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-help
 
 # Show help
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --help
+
+# Migrate existing SQLite installation to PostgreSQL
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/daVinci2793/proxmox-helper/main/donetick.sh)" -- --migrate-to-postgres
 ```
 
 ### What the Script Does
